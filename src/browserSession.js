@@ -200,6 +200,13 @@ export class BrowserSession {
       }
 
       if (popup) {
+        // A aba abre em about:blank (gesto de clique) e só recebe a URL real
+        // depois de um roundtrip assíncrono até a Edge Function sso-proxy —
+        // esperar só "domcontentloaded" aqui resolve na hora (about:blank já
+        // carregou) e retornaria a URL errada antes do redirect acontecer.
+        await popup
+          .waitForURL((url) => url.href !== 'about:blank', { timeout: 20000 })
+          .catch(() => {})
         await popup.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {})
         const popupUrl = popup.url()
         if (popupUrl !== 'about:blank' && !isAllowedUrl(popupUrl)) {
