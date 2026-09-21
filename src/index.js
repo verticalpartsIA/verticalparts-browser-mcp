@@ -1,8 +1,6 @@
 import express from 'express'
-import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { config } from './config.js'
 import { BrowserSession } from './browserSession.js'
 import { registerTools } from './tools.js'
@@ -22,65 +20,40 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
 
-/** @type {Map<string, { transport: StreamableHTTPServerTransport, browser: BrowserSession }>} */
-const sessions = new Map()
+// Um único browser (uma identidade, uma conta de serviço) compartilhado por
+// todo mundo que chamar este servidor — não um por cliente/sessão MCP. O
+// próprio BrowserSession já serializa as ações (mutex interno).
+const browser = new BrowserSession()
 
-async function createSessionEntry() {
-  const browser = new BrowserSession()
+// Transporte MCP em modo stateless: sem session-id, sem estado por conexão
+// guardado em memória. Isso é proposital, não só simplicidade — a versão
+// anterior (com sessionIdGenerator) guardava sessão em memória por
+// mcp-session-id; um restart do processo (deploy, crash, systemd) derrubava
+// todas as sessões de todo mundo, e qualquer cliente com o session-id antigo
+// ficava travado permanentemente em "Sessão inexistente. Envie um initialize
+// primeiro" — inclusive em conversas novas, porque o cliente reutiliza o
+// session-id da conexão do connector. Sem sessão para perder, não tem esse
+// jeito de travar: cada request cria um McpServer+transport efêmeros, mas o
+// estado que importa de verdade (o browser logado) vive fora disso, no
+// `browser` acima.
+app.post('/mcp', async (req, res) => {
   const server = new McpServer({ name: 'verticalparts-browser-mcp', version: '0.1.0' })
   registerTools(server, browser)
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (sessionId) => sessions.set(sessionId, entry),
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+  res.on('close', () => {
+    transport.close().catch(() => {})
+    server.close().catch(() => {})
   })
-
-  transport.onclose = () => {
-    if (transport.sessionId) {
-      sessions.get(transport.sessionId)?.browser.close().catch(() => {})
-      sessions.delete(transport.sessionId)
-    }
-  }
-
-  const entry = { transport, browser }
   await server.connect(transport)
-  return entry
-}
-
-app.post('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id']
-  let entry = sessionId ? sessions.get(sessionId) : undefined
-
-  if (!entry) {
-    if (!isInitializeRequest(req.body)) {
-      res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32000, message: 'Sessão inexistente. Envie um request initialize primeiro.' },
-        id: null,
-      })
-      return
-    }
-    entry = await createSessionEntry()
-  }
-
-  await entry.transport.handleRequest(req, res, req.body)
+  await transport.handleRequest(req, res, req.body)
 })
 
-app.get('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id']
-  const entry = sessionId ? sessions.get(sessionId) : undefined
-  if (!entry) {
-    res.status(400).send('Sessão inexistente')
-    return
-  }
-  await entry.transport.handleRequest(req, res)
+app.get('/mcp', (_req, res) => {
+  res.status(405).json({ error: 'Modo stateless: sem stream de notificações do servidor via GET.' })
 })
 
-app.delete('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id']
-  const entry = sessionId ? sessions.get(sessionId) : undefined
-  if (entry) await entry.transport.handleRequest(req, res)
-  else res.status(400).send('Sessão inexistente')
+app.delete('/mcp', (_req, res) => {
+  res.status(405).json({ error: 'Modo stateless: não há sessão para encerrar.' })
 })
 
 // Só loopback: o Nginx faz o proxy reverso com auth. Exposto em 0.0.0.0
@@ -91,6 +64,6 @@ app.listen(config.port, config.host, () => {
 })
 
 process.on('SIGTERM', async () => {
-  for (const entry of sessions.values()) await entry.browser.close().catch(() => {})
+  await browser.close().catch(() => {})
   process.exit(0)
 })
