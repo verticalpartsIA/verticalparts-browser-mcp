@@ -29,6 +29,10 @@ export class BrowserSession {
   #browser = null
   #context = null
   #page = null
+  // Aba do portal (vpsistema.com/login) separada da aba "ativa": abrir um
+  // card troca a ativa para o subsistema, mas listar/abrir OUTRO card depois
+  // precisa continuar achando a grade no portal, não no subsistema aberto.
+  #portalPage = null
   #mutex = new Mutex()
   #loggedIn = false
 
@@ -48,9 +52,12 @@ export class BrowserSession {
       })
       this.#context.setDefaultTimeout(15000)
     }
-    if (!this.#page || this.#page.isClosed()) {
+    if (!this.#portalPage || this.#portalPage.isClosed()) {
       const pages = this.#context.pages()
-      this.#page = pages[0] || (await this.#context.newPage())
+      this.#portalPage = pages[0] || (await this.#context.newPage())
+    }
+    if (!this.#page || this.#page.isClosed()) {
+      this.#page = this.#portalPage
     }
   }
 
@@ -62,10 +69,11 @@ export class BrowserSession {
 
   async #performLogin() {
     const { baseUrl, email, password } = config.vpsistema
-    await this.#page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' })
+    const page = this.#portalPage
+    await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' })
 
-    const emailInput = this.#page.locator('input[name="vp-email"]')
-    const dashboardMarker = this.#page.getByText('Selecione o sistema que deseja acessar')
+    const emailInput = page.locator('input[name="vp-email"]')
+    const dashboardMarker = page.getByText('Selecione o sistema que deseja acessar')
 
     // App React (Vite) — o HTML inicial fica quase vazio até o bundle carregar
     // e montar a tela. "domcontentloaded" dispara antes disso, então checar o
@@ -81,8 +89,8 @@ export class BrowserSession {
 
     if (!alreadyIn) {
       await emailInput.fill(email)
-      await this.#page.locator('input[name="vp-password"]').fill(password)
-      await this.#page.getByRole('button', { name: /^Entrar/ }).click()
+      await page.locator('input[name="vp-password"]').fill(password)
+      await page.getByRole('button', { name: /^Entrar/ }).click()
       await dashboardMarker.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {
         throw new Error(
           'Login em vpsistema.com falhou: o dashboard não carregou. Verifique VPSISTEMA_EMAIL/VPSISTEMA_PASSWORD e se a conta está ativa.',
@@ -94,12 +102,17 @@ export class BrowserSession {
     await this.#persistState()
   }
 
-  /** Garante sessão autenticada; relogar se a sessão caiu. */
+  /**
+   * Garante sessão autenticada. Esta SPA não tem rota "/dashboard" de
+   * verdade — login e dashboard vivem na mesma URL, trocando de componente
+   * por estado React — então a única forma confiável de saber se já está
+   * logado é o flag em memória (a sessão do Supabase persiste em
+   * localStorage dentro do storageState salvo em disco).
+   */
   async ensureLoggedIn() {
     return this.#mutex.run(async () => {
       await this.#ensureBrowser()
-      const onDashboard = /\/dashboard\/?$/.test(this.#page.url())
-      if (!this.#loggedIn || !onDashboard) {
+      if (!this.#loggedIn) {
         await this.#performLogin()
       }
       return { url: this.#page.url(), title: await this.#page.title() }
@@ -114,6 +127,15 @@ export class BrowserSession {
     })
   }
 
+  /** Como withPage, mas sempre na aba do portal (onde vive a grade de cards). */
+  async withPortalPage(fn) {
+    return this.#mutex.run(async () => {
+      await this.#ensureBrowser()
+      await this.#portalPage.bringToFront().catch(() => {})
+      return fn(this.#portalPage)
+    })
+  }
+
   /** Troca a página "ativa" (ex.: depois de abrir um card em nova aba). */
   setActivePage(page) {
     this.#page = page
@@ -121,6 +143,14 @@ export class BrowserSession {
 
   get activePage() {
     return this.#page
+  }
+
+  /** Volta a aba ativa para o portal (útil depois de abrir um card, pra abrir outro). */
+  async focusPortal() {
+    return this.withPortalPage(async (page) => {
+      this.setActivePage(page)
+      return { url: page.url(), title: await page.title() }
+    })
   }
 
   async navigate(url) {
@@ -132,7 +162,7 @@ export class BrowserSession {
   }
 
   async listCards() {
-    return this.withPage(async (page) => {
+    return this.withPortalPage(async (page) => {
       const cards = page.locator('main button:has(h3)')
       const count = await cards.count()
       const result = []
@@ -148,7 +178,7 @@ export class BrowserSession {
 
   /** Clica um card pelo nome (match parcial, case-insensitive) e segue a aba nova (se abrir). */
   async openCard(nameQuery) {
-    return this.withPage(async (page) => {
+    return this.withPortalPage(async (page) => {
       const card = page.locator('main button:has(h3)').filter({
         has: page.locator('h3', { hasText: new RegExp(nameQuery, 'i') }),
       })
@@ -180,7 +210,11 @@ export class BrowserSession {
         return { card: cardName, url: popup.url(), title: await popup.title().catch(() => '') }
       }
 
+      // Card sem SSO (Administração/Painel Executivo/Logs): a view troca por
+      // estado React na própria aba do portal, sem navegação — a aba ativa
+      // passa a ser a do portal, que é onde a view nova está renderizada.
       await page.waitForLoadState('domcontentloaded').catch(() => {})
+      this.setActivePage(page)
       return { card: cardName, url: page.url(), title: await page.title() }
     })
   }
@@ -191,6 +225,7 @@ export class BrowserSession {
     this.#browser = null
     this.#context = null
     this.#page = null
+    this.#portalPage = null
     this.#loggedIn = false
   }
 }

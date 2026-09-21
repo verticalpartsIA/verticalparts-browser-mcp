@@ -69,6 +69,24 @@ export function registerTools(server, browser) {
   )
 
   server.registerTool(
+    'vp_focus_portal',
+    {
+      title: 'Voltar para a aba do portal',
+      description:
+        'Torna a aba do vpsistema.com (portal) a aba ativa novamente, sem fechar a aba do card aberto. Use antes de vp_open_card se a última ação foi em um subsistema e você quer abrir outro card.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const result = await browser.focusPortal()
+        return textContent(result)
+      } catch (err) {
+        return errorContent(err)
+      }
+    },
+  )
+
+  server.registerTool(
     'vp_navigate',
     {
       title: 'Navegar para uma URL',

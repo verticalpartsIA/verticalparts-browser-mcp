@@ -46,6 +46,7 @@ Claude ──MCP (Streamable HTTP)──> este servidor ──Playwright──> 
 | `vp_login` | Garante sessão autenticada (idempotente) |
 | `vp_list_cards` | Lista os cards visíveis no dashboard (nome, bloqueado ou não) |
 | `vp_open_card` | Clica um card por nome (match parcial) e segue o SSO até o subsistema |
+| `vp_focus_portal` | Volta a aba ativa para o portal (pra abrir outro card em seguida) |
 | `vp_navigate` | Vai para uma URL (só dentro do allow-list) |
 | `vp_status` | URL/título atuais da aba ativa |
 | `vp_click` | Clica um elemento por texto visível ou seletor CSS |
@@ -136,6 +137,14 @@ Claude, do mesmo jeito que os outros MCPs internos da VerticalParts.
   tirados diretamente do código-fonte do `vpsistema`
   (`src/pages/Login.jsx`, `src/pages/Dashboard.jsx`) — se esses componentes
   mudarem de texto/estrutura, atualize `src/browserSession.js` junto.
+- O portal **não tem rotas de URL de verdade** — `App.jsx` troca Login/Dashboard
+  por estado React na mesma URL (sem React Router). Por isso `ensureLoggedIn`
+  não pode checar a URL pra saber se já está logado; usa só o flag em memória.
+- A sessão do vpsistema fica em uma aba própria (`portalPage`), separada da
+  aba "ativa" que `vp_click`/`vp_read_page`/`vp_screenshot` operam. Abrir um
+  card troca a ativa para o subsistema; `vp_list_cards`/`vp_open_card` sempre
+  atuam na aba do portal, então dá pra abrir vários cards em sequência sem
+  perder a grade. Use `vp_focus_portal` pra voltar a aba ativa pro portal.
 - `vp_open_card` espera a aba nova que o Dashboard abre no clique (SSO);
   cards administrativos (Administração/Painel Executivo/Logs) navegam dentro
   da própria SPA, sem aba nova — o código trata os dois casos.
