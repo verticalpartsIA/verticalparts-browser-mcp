@@ -8,6 +8,7 @@ function required(name) {
 
 export const config = {
   port: Number(process.env.PORT || 8787),
+  host: process.env.HOST || '127.0.0.1',
   mcpAuthToken: process.env.MCP_AUTH_TOKEN || null,
   vpsistema: {
     baseUrl: (process.env.VPSISTEMA_URL || 'https://vpsistema.com').replace(/\/$/, ''),

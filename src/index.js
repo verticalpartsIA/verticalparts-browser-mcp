@@ -83,8 +83,11 @@ app.delete('/mcp', async (req, res) => {
   else res.status(400).send('Sessão inexistente')
 })
 
-app.listen(config.port, () => {
-  console.log(`verticalparts-browser-mcp ouvindo na porta ${config.port}`)
+// Só loopback: o Nginx faz o proxy reverso com auth. Exposto em 0.0.0.0
+// seria alcançável direto da internet sem nenhuma checagem (erro já visto
+// em produção no vpprd-mcp, porta 3100).
+app.listen(config.port, config.host, () => {
+  console.log(`verticalparts-browser-mcp ouvindo em ${config.host}:${config.port}`)
 })
 
 process.on('SIGTERM', async () => {
