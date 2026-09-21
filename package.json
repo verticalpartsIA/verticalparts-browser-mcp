@@ -1,0 +1,24 @@
+{
+  "name": "verticalparts-browser-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server que loga em vpsistema.com e opera os subsistemas (cards) como um usuário autenticado, via Playwright.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verticalpartsIA/verticalparts-browser-mcp.git"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^18.0.1",
+    "express": "^5.2.1",
+    "playwright": "^1.63.0",
+    "zod": "^4.6.5"
+  }
+}
